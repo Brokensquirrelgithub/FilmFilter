@@ -5,15 +5,18 @@
     "tone",
     "color",
     "halation",
+    "sharpness",
     "grain",
     "lens"
   ],
   "effects": {
     "tone": {
       "enabled": true,
-      "lifted_black": 0.045,
-      "contrast": 0.92,
-      "highlight_rolloff": 0.35,
+      "black_lift": 0.045,
+      "contrast_softness": 0.18,
+      "highlight_compression": 0.38,
+      "shoulder_strength": 0.42,
+      "shadow_chroma_damping": 0.40,
       "rolloff_start": 0.62,
       "midtone_preservation": 0.65
     },
@@ -27,15 +30,23 @@
     "halation": {
       "enabled": true,
       "strength": 0.055,
+      "intensity_percent": 75,
       "threshold": 0.72,
       "radius": 9.0,
       "warmth": [1.0, 0.42, 0.18]
     },
+    "sharpness": {
+      "enabled": true,
+      "soften_digital_sharpness": false,
+      "sharpness_softening_strength": 0.18,
+      "microcontrast_reduction": 0.16
+    },
     "grain": {
       "enabled": true,
-      "strength": 0.028,
-      "size": 1.15,
-      "chroma": 0.22,
+      "grain_amount": 0.024,
+      "grain_size": 1.05,
+      "grain_shadow_bias": 0.58,
+      "grain_chromaticity": 0.18,
       "seed": null
     },
     "lens": {

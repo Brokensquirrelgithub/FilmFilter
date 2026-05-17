@@ -13,7 +13,8 @@ def test_soft_portrait_pipeline_runs_on_float_rgb_image() -> None:
     pipeline = FilmPipeline(preset)
 
     gradient = np.linspace(0.0, 1.0, 32, dtype=np.float32)
-    image = np.dstack(np.meshgrid(gradient, gradient, indexing="xy") + [np.full((32, 32), 0.45, dtype=np.float32)])
+    x, y = np.meshgrid(gradient, gradient, indexing="xy")
+    image = np.dstack((x, y, np.full((32, 32), 0.45, dtype=np.float32)))
 
     output = pipeline.process(image)
 

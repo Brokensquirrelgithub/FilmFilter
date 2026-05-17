@@ -9,36 +9,68 @@ import numpy as np
 def apply_grain(
     image: np.ndarray,
     *,
-    strength: float = 0.028,
-    size: float = 1.15,
-    chroma: float = 0.22,
+    grain_amount: float = 0.024,
+    grain_size: float = 1.05,
+    grain_shadow_bias: float = 0.58,
+    grain_chromaticity: float = 0.18,
+    strength: float | None = None,
+    size: float | None = None,
+    chroma: float | None = None,
     seed: int | None = None,
 ) -> np.ndarray:
     """Overlay fine luminance-dependent grain.
 
-    Grain makes smooth digital gradients feel more tactile and scanned, but it is
-    most convincing when it remains small, irregular, and weaker in clean bright
-    regions. This stage creates mostly monochrome texture with slight chromatic
-    variation so the result feels like consumer film grain rather than colored
-    sensor noise or an obvious overlay.
+    Real film grain is not a uniform layer pasted over the frame. It clusters at
+    different scales, reads more clearly in shadows and midtones, and becomes less
+    visible in dense highlights where the image should stay creamy. This stage
+    blends several fine procedural noise scales, weights them by luminance, and
+    adds only restrained chromatic variation so texture feels scanned rather than
+    like digital sensor noise.
     """
     img = np.clip(image.astype(np.float32, copy=False), 0.0, 1.0)
     h, w = img.shape[:2]
     rng = np.random.default_rng(seed)
 
-    base = rng.normal(0.0, 1.0, (h, w, 1)).astype(np.float32)
-    if size > 0.0:
-        base = cv2.GaussianBlur(base, ksize=(0, 0), sigmaX=max(size * 0.35, 0.01))
-        if base.ndim == 2:
-            base = base[..., None]
-    base /= max(float(np.std(base)), 1e-6)
+    # Accept the first-pass names so older presets remain usable.
+    if strength is not None:
+        grain_amount = strength
+    if size is not None:
+        grain_size = size
+    if chroma is not None:
+        grain_chromaticity = chroma
 
-    color_noise = rng.normal(0.0, 1.0, (h, w, 3)).astype(np.float32)
-    color_noise = cv2.GaussianBlur(color_noise, ksize=(0, 0), sigmaX=max(size * 0.25, 0.01))
-    color_noise /= max(float(np.std(color_noise)), 1e-6)
+    def normalized_noise(shape: tuple[int, ...], sigma: float) -> np.ndarray:
+        noise = rng.normal(0.0, 1.0, shape).astype(np.float32)
+        if sigma > 0.01:
+            noise = cv2.GaussianBlur(noise, ksize=(0, 0), sigmaX=sigma, sigmaY=sigma)
+            if noise.ndim == 2:
+                noise = noise[..., None]
+        return noise / max(float(np.std(noise)), 1e-6)
 
     luminance = np.dot(img, np.array([0.2126, 0.7152, 0.0722], dtype=np.float32))[..., None]
-    intensity = 0.55 + (1.0 - luminance) * 0.65
-    grain = (base * (1.0 - chroma) + color_noise * chroma) * strength * intensity
+
+    fine_sigma = max(float(grain_size) * 0.22, 0.01)
+    medium_sigma = max(float(grain_size) * 0.58, 0.01)
+    coarse_sigma = max(float(grain_size) * 1.15, 0.01)
+    fine = normalized_noise((h, w, 1), fine_sigma)
+    medium = normalized_noise((h, w, 1), medium_sigma)
+    coarse = normalized_noise((h, w, 1), coarse_sigma)
+    mono_grain = fine * 0.58 + medium * 0.30 + coarse * 0.12
+    mono_grain /= max(float(np.std(mono_grain)), 1e-6)
+
+    color_fine = normalized_noise((h, w, 3), max(float(grain_size) * 0.18, 0.01))
+    color_medium = normalized_noise((h, w, 3), max(float(grain_size) * 0.48, 0.01))
+    color_grain = color_fine * 0.72 + color_medium * 0.28
+    color_grain /= max(float(np.std(color_grain)), 1e-6)
+
+    # Grain should not look like a static opacity overlay. Shadows/mids get the
+    # most texture; highlights stay cleaner so the shoulder remains creamy.
+    shadow_weight = (1.0 - luminance) ** (1.15 + np.clip(grain_shadow_bias, 0.0, 1.0) * 0.85)
+    mid_weight = np.exp(-((luminance - 0.42) ** 2) / 0.08)
+    highlight_protection = 1.0 - np.clip((luminance - 0.72) / 0.28, 0.0, 1.0) ** 2
+    intensity = (0.34 + shadow_weight * 0.62 + mid_weight * 0.34) * highlight_protection
+
+    chroma_mix = np.clip(grain_chromaticity, 0.0, 1.0)
+    grain = (mono_grain * (1.0 - chroma_mix) + color_grain * chroma_mix) * grain_amount * intensity
 
     return np.clip(img + grain, 0.0, 1.0)

@@ -15,6 +15,7 @@ from .color import apply_color
 from .grain import apply_grain
 from .halation import apply_halation
 from .lens import apply_lens
+from .sharpness import apply_sharpness
 from .tone import apply_tone
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -27,6 +28,7 @@ STAGES: dict[str, StageFunction] = {
     "tone": apply_tone,
     "color": apply_color,
     "halation": apply_halation,
+    "sharpness": apply_sharpness,
     "grain": apply_grain,
     "lens": apply_lens,
 }

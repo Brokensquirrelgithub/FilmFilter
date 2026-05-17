@@ -41,11 +41,12 @@ The project is built around a JSON-driven, sequential pipeline. Images are loade
 
 Current stages:
 
-1. `tone` — lifted blacks, softened contrast, and highlight rolloff while preserving midtones.
+1. `tone` — lifted blacks, softened contrast, and creamy luminance-based highlight shoulder while preserving midtones.
 2. `color` — restrained saturation, muted greens, warm highlights, and a slight magenta skin bias.
 3. `halation` — highlight isolation, Gaussian blur, warm tint, and subtle additive blending.
-4. `grain` — procedural luminance-dependent grain with slight chromatic variation.
-5. `lens` — subtle vignette, edge softness, and optional tiny chromatic aberration.
+4. `sharpness` — optional edge-aware digital sharpness reduction, disabled by default.
+5. `grain` — multi-scale procedural grain with luminance weighting and slight chromatic variation.
+6. `lens` — subtle vignette, edge softness, and optional tiny chromatic aberration.
 
 Preset files live in `presets/`. The first preset is `soft_portrait_400.json`, which defines both the stage order and effect strengths.
 
@@ -59,6 +60,7 @@ FilmFilter/
 │   ├── tone.py
 │   ├── color.py
 │   ├── halation.py
+│   ├── sharpness.py
 │   ├── grain.py
 │   ├── lens.py
 │   └── pipeline.py
@@ -107,17 +109,51 @@ Presets are JSON files that define the ordered pipeline and per-stage parameters
 
 ```json
 {
-  "pipeline": ["tone", "color", "halation", "grain", "lens"],
+  "pipeline": ["tone", "color", "halation", "sharpness", "grain", "lens"],
   "effects": {
     "tone": {
       "enabled": true,
-      "lifted_black": 0.045
+      "black_lift": 0.045,
+      "contrast_softness": 0.18,
+      "highlight_compression": 0.38,
+      "shoulder_strength": 0.42
     }
   }
 }
 ```
 
 This keeps aesthetic choices centralized, inspectable, and easy to tune without editing implementation files.
+
+### Tone and Highlight Controls
+
+Highlight behavior is critical to film perception because digital clipping often fails abruptly while print-like images bend bright values into a smoother shoulder. FilmFilter shapes luminance rather than each RGB channel independently, which helps highlights stay warm and bright without turning gray, muddy, or HDR-like.
+
+- `black_lift` raises the deepest shadows so blacks feel like scanned paper density rather than crushed digital black.
+- `contrast_softness` gently reduces brittle global contrast while keeping midtones usable for faces and ordinary objects.
+- `highlight_compression` controls how much bright luminance bends away from hard clipping.
+- `shoulder_strength` controls how strongly the creamy upper highlight shoulder is blended into the result.
+- `shadow_chroma_damping` reduces color casts that become more visible when deep blacks are lifted.
+
+### Grain Controls
+
+Real film grain is not a uniform transparent overlay. It varies with exposure, appears more clearly in shadows and midtones, and becomes weaker in highlights where density and highlight rolloff should feel smooth.
+
+- `grain_amount` controls the overall texture strength; defaults should stay subtle.
+- `grain_size` controls the scale of the blended procedural noise.
+- `grain_shadow_bias` shifts texture visibility toward shadows and midtones.
+- `grain_chromaticity` blends restrained color variation into mostly monochrome grain.
+
+### Halation Controls
+
+Halation should feel like a faint optical response around bright areas, not an obvious glow overlay. The `intensity_percent` control scales the existing halation recipe as a percentage, so presets can make the effect quieter without changing its threshold, radius, or warmth.
+
+### Optional Sharpness Reduction
+
+The `sharpness` stage is intentionally disabled by default through `soften_digital_sharpness: false`. When enabled, it uses mild edge-aware smoothing and selective microcontrast reduction to make oversharpened digital files feel less computational while preserving overall clarity.
+
+- `soften_digital_sharpness` toggles the transform.
+- `sharpness_softening_strength` controls the edge-aware softening amount.
+- `microcontrast_reduction` controls how much small local contrast is attenuated.
 
 ## Current Limitations
 
