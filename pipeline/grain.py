@@ -93,9 +93,16 @@ def apply_grain(
         + density_layer * (0.05 + balance * 0.02)
     )
 
-    color_fine = normalized_noise((h, w, 3), max(float(grain_size) * 0.18, 0.01))
-    color_medium = normalized_noise((h, w, 3), max(float(grain_size) * 0.72, 0.01))
-    color_grain = normalized_map(color_fine * 0.66 + color_medium * 0.34)
+    # Dye cloud sizes differ per layer: yellow (blue ch) is coarsest, magenta
+    # (green ch) is finest, cyan (red ch) is intermediate. Generate independent
+    # per-channel noise at layer-appropriate blur radii so chroma grain has the
+    # correct frequency character rather than uniform cross-channel texture.
+    _ch_scale = [1.00, 0.72, 1.40]  # red, green, blue — relative to grain_size
+    color_grain = np.empty((h, w, 3), dtype=np.float32)
+    for ci, scale in enumerate(_ch_scale):
+        fine_ch = normalized_noise((h, w), max(float(grain_size) * 0.18 * scale, 0.01))
+        med_ch = normalized_noise((h, w), max(float(grain_size) * 0.72 * scale, 0.01))
+        color_grain[..., ci : ci + 1] = normalized_map(fine_ch * 0.66 + med_ch * 0.34)
 
     # Texture is exposure-aware and edge-aware. Highlights remain creamy, while
     # hard digital transitions get less additive grain and more soft integration.
@@ -119,7 +126,14 @@ def apply_grain(
         + mono_grain * legacy_strength * 0.55
     )
     chroma_texture = color_grain * (legacy_strength * chroma_mix * 0.70 + micro_strength * chroma_mix * 0.20)
-    grain = (luma_texture * (1.0 - chroma_mix * 0.38) + chroma_texture) * intensity
+    # Colour grain in near-black areas creates visible per-channel blobs: each
+    # dye-layer noise pattern is independent so a dark pixel gets pushed red, blue,
+    # or green by whichever channel happened to be high at that spot. Real film has
+    # no dye density to modulate at very low exposure, so fade the colour grain
+    # contribution to zero below a meaningful signal floor. Luma grain is unaffected
+    # — silver grain in shadows is expected and looks correct.
+    chroma_signal_gate = smoothstep(0.06, 0.35, luminance_values)
+    grain = (luma_texture * (1.0 - chroma_mix * 0.38) + chroma_texture * chroma_signal_gate) * intensity
 
     density_amount = np.clip(density_instability, 0.0, 0.08) + density_strength
     density_modulation = density_layer * density_amount * (
@@ -173,6 +187,11 @@ def apply_grain(
     texture_chroma = np.clip(chroma_instability, 0.0, 0.12)
     saturation_mod = 1.0 + density_layer * texture_chroma * color_purity * (1.0 - masks["highlights"] * 0.70)
     saturation_mod -= mid_layer * texture_chroma * 0.22 * (1.0 - skin_like * 0.72)
+    # Near-black pixels have no meaningful dye density to modulate. Fade the
+    # saturation modulation to zero below a meaningful signal floor so the grain
+    # stage does not amplify faint colour casts in near-black areas.
+    shadow_sat_gate = smoothstep(0.04, 0.25, lum_after)
+    saturation_mod = 1.0 + (saturation_mod - 1.0) * shadow_sat_gate
     img = lum_after + chroma_delta * saturation_mod
 
     if texture_chroma > 0.0:
@@ -180,7 +199,11 @@ def apply_grain(
         drifted = img.copy()
         drifted[..., 0] = shift_channel(img[..., 0], drift_px, -drift_px * 0.35)
         drifted[..., 2] = shift_channel(img[..., 2], -drift_px * 0.55, drift_px * 0.25)
-        chroma_mask = (masks["shadows"] * 0.55 + masks["midtones"] * 0.28) * (1.0 - skin_like * 0.62)
+        # Knee on signal level: real dye misregistration is invisible near black
+        # because there is no density to displace. Fade the blend to zero below
+        # a meaningful signal floor so near-black pixels keep their channel alignment.
+        signal_floor = smoothstep(0.04, 0.28, luminance_values)
+        chroma_mask = (masks["shadows"] * 0.55 + masks["midtones"] * 0.28) * (1.0 - skin_like * 0.62) * signal_floor
         img = img * (1.0 - chroma_mask * texture_chroma * 0.60) + drifted * (chroma_mask * texture_chroma * 0.60)
 
     irregularity = np.clip(scan_irregularity, 0.0, 0.10)

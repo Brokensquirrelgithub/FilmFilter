@@ -10,8 +10,12 @@ from typing import Any
 
 import numpy as np
 from PIL import Image, ImageOps
+from pillow_heif import register_heif_opener
+
+register_heif_opener()
 
 from .color import apply_color
+from .curves import apply_curves
 from .grain import apply_grain
 from .halation import apply_halation
 from .lens import apply_lens
@@ -26,6 +30,7 @@ StageFunction = Callable[..., np.ndarray]
 
 STAGES: dict[str, StageFunction] = {
     "tone": apply_tone,
+    "curves": apply_curves,
     "color": apply_color,
     "halation": apply_halation,
     "sharpness": apply_sharpness,
