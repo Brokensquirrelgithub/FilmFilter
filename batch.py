@@ -3,11 +3,21 @@
 from __future__ import annotations
 
 import argparse
+import time
 from pathlib import Path
 
 from pipeline.pipeline import FilmPipeline, read_image, write_image
 
-IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".tif", ".tiff", ".bmp", ".webp", ".heic", ".heif"}
+IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".tif", ".tiff", ".bmp", ".webp", ".heic", ".heif",
+                    ".arw", ".cr2", ".cr3", ".nef", ".nrw", ".raf", ".dng", ".rw2", ".orf", ".pef"}
+
+
+def _fmt_time(seconds: float) -> str:
+    """Format a duration as '1m 32s' or '45s'."""
+    s = int(seconds)
+    if s < 60:
+        return f"{s}s"
+    return f"{s // 60}m {s % 60:02d}s"
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -57,14 +67,34 @@ def main() -> None:
     preset_label = Path(args.preset).stem
     pipeline = FilmPipeline.from_preset_name(args.preset)
 
+    total_start = time.monotonic()
+    elapsed_per_image: list[float] = []
+
     for i, src in enumerate(images, 1):
         dest = output_dir / f"{src.stem}_{preset_label}.jpg"
-        print(f"[{i}/{len(images)}] {src.name} → {dest}")
+        prefix = f"[{i}/{len(images)}] {src.name}"
+
+        t0 = time.monotonic()
+
+        print(f"{prefix}  loading …   ", end="\r", flush=True)
         image = read_image(src)
+
+        print(f"{prefix}  processing …", end="\r", flush=True)
         processed = pipeline.process(image)
+
+        print(f"{prefix}  saving …    ", end="\r", flush=True)
         write_image(dest, processed, quality=args.quality)
 
-    print(f"\nDone — {len(images)} image(s) written to '{output_dir}'.")
+        elapsed = time.monotonic() - t0
+        elapsed_per_image.append(elapsed)
+
+        avg = sum(elapsed_per_image) / len(elapsed_per_image)
+        remaining = (len(images) - i) * avg
+        eta = f"  ETA {_fmt_time(remaining)}" if i < len(images) else ""
+        print(f"{prefix}  → {dest.name}  ({elapsed:.1f}s){eta}    ")
+
+    total = time.monotonic() - total_start
+    print(f"\nDone — {len(images)} image(s) in {_fmt_time(total)}  written to '{output_dir}'.")
 
 
 if __name__ == "__main__":

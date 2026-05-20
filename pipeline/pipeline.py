@@ -88,8 +88,22 @@ def load_preset(preset_name: str | Path) -> dict[str, Any]:
     return preset
 
 
+_RAW_EXTENSIONS = {".arw", ".cr2", ".cr3", ".nef", ".nrw", ".raf", ".dng", ".rw2", ".orf", ".pef"}
+
+
 def read_image(path: str | Path) -> np.ndarray:
-    """Read an image as EXIF-corrected RGB float data in the 0..1 range."""
+    """Read an image as EXIF-corrected RGB float data in the 0..1 range.
+
+    RAW formats (ARW, CR2, NEF, etc.) are decoded via rawpy using the camera's
+    white balance metadata and 16-bit output for maximum precision.
+    """
+    path = Path(path)
+    if path.suffix.lower() in _RAW_EXTENSIONS:
+        import rawpy
+        with rawpy.imread(str(path)) as raw:
+            rgb = raw.postprocess(use_camera_wb=True, output_bps=16, no_auto_bright=True)
+        return rgb.astype(np.float32) / 65535.0
+
     with Image.open(path) as image:
         image = ImageOps.exif_transpose(image).convert("RGB")
         return np.asarray(image, dtype=np.float32) / 255.0
