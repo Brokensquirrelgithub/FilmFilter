@@ -19,6 +19,7 @@ from .curves import apply_curves
 from .grain import apply_grain
 from .halation import apply_halation
 from .lens import apply_lens
+from .light_leak import apply_light_leak
 from .sharpness import apply_sharpness
 from .tone import apply_tone
 
@@ -36,6 +37,7 @@ STAGES: dict[str, StageFunction] = {
     "sharpness": apply_sharpness,
     "grain": apply_grain,
     "lens": apply_lens,
+    "light_leak": apply_light_leak,
 }
 
 

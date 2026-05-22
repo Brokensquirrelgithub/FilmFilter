@@ -155,6 +155,85 @@ def _apply_blue_response(
 
 
 
+def _apply_film_gamut(
+    image: np.ndarray,
+    *,
+    gamut_compression: float,
+) -> np.ndarray:
+    """Hue-dependent gamut compression matching C-41 negative film.
+
+    Color negative film cannot reproduce the full sRGB gamut. Saturated colors
+    desaturate AND shift hue at the gamut boundary in characteristic ways:
+
+    - Saturated reds (LED taillights, deep flowers) → desaturate and shift toward
+      orange — the cyan dye layer cannot absorb deeply enough at the red end
+    - Saturated blues (neon signs, pool water) → desaturate and shift toward cyan;
+      the yellow dye layer shoulders before the others
+    - Saturated greens → desaturate and shift toward yellow as the magenta dye's
+      sideband absorption pulls the rendered hue warmer
+    - Cyans → film's narrowest gamut region, strong compression
+    - Magentas/purples → desaturate and shift toward red; film struggles to keep
+      the blue contribution intact at high chroma
+
+    Each hue region gets a soft compression of its excess-over-luminance plus a
+    small additive shift in the direction the dye chemistry actually drifts.
+    The pass is gated by chroma so only saturated pixels move.
+    """
+    if gamut_compression <= 0.0:
+        return image
+
+    img = image.copy()
+    r = img[..., 0:1]
+    g = img[..., 1:2]
+    b = img[..., 2:3]
+    lum = luminance(img)[..., None]
+    strength = np.clip(gamut_compression, 0.0, 1.0)
+
+    chroma = np.max(img, axis=-1, keepdims=True) - np.min(img, axis=-1, keepdims=True)
+    # Only act on chromatically committed pixels — leave near-neutrals alone.
+    sat_gate = smoothstep(0.20, 0.55, chroma)
+
+    # Hue-region soft masks: each is the excess of its defining channel(s)
+    # over the others, clipped to [0,1]. The masks overlap softly near hue
+    # transitions, which is desirable — colors at hue boundaries get blended
+    # treatment rather than a hard region switch.
+    red_lead = np.clip(r - np.maximum(g, b), 0.0, 1.0)
+    green_lead = np.clip(g - np.maximum(r, b), 0.0, 1.0)
+    blue_lead = np.clip(b - np.maximum(r, g), 0.0, 1.0)
+    cyan_lead = np.clip(np.minimum(g, b) - r, 0.0, 1.0)
+    magenta_lead = np.clip(np.minimum(r, b) - g, 0.0, 1.0)
+
+    # Saturated red → desaturate red toward lum, raise green for the orange shift.
+    red_press = red_lead * sat_gate * strength
+    img[..., 0:1] -= red_press * (r - lum) * 0.18
+    img[..., 1:2] += red_press * 0.045
+
+    # Saturated blue → desaturate blue toward lum, raise green slightly (cyan lean).
+    blue_press = blue_lead * sat_gate * strength
+    img[..., 2:3] -= blue_press * (b - lum) * 0.22
+    img[..., 1:2] += blue_press * 0.028
+
+    # Saturated green → desaturate green toward lum, raise red (yellow-green lean).
+    green_press = green_lead * sat_gate * strength
+    img[..., 1:2] -= green_press * (g - lum) * 0.18
+    img[..., 0:1] += green_press * 0.028
+
+    # Cyan → film's narrowest region; compress both contributing channels and add a
+    # faint green lean (cyans render slightly green-ish on most consumer stocks).
+    cyan_press = cyan_lead * sat_gate * strength
+    img[..., 1:2] -= cyan_press * (g - lum) * 0.20
+    img[..., 2:3] -= cyan_press * (b - lum) * 0.24
+    img[..., 1:2] += cyan_press * 0.012
+
+    # Magenta/purple → other narrow region; pull the blue contribution in harder
+    # than the red, which drifts the hue toward red/pink as chroma rises.
+    magenta_press = magenta_lead * sat_gate * strength
+    img[..., 0:1] -= magenta_press * (r - lum) * 0.10
+    img[..., 2:3] -= magenta_press * (b - lum) * 0.28
+
+    return img
+
+
 def apply_color(
     image: np.ndarray,
     *,
@@ -168,6 +247,7 @@ def apply_color(
     crossover_strength: float = 0.34,
     blue_sky_teal: float = 0.35,
     blue_desaturation: float = 0.0,
+    gamut_compression: float = 0.55,
 ) -> np.ndarray:
     """Apply subtle cross-channel consumer-film color rendering.
 
@@ -229,6 +309,12 @@ def apply_color(
     # Hue-selective blue compression matching the yellow dye layer's response.
     if blue_desaturation > 0.0:
         img = _apply_blue_response(img, blue_desaturation=blue_desaturation)
+
+    # Hue-dependent gamut compression for colors outside C-41's reachable range.
+    # Runs before the sky teal and white-approach passes so those hue-specific
+    # shifts layer on a gamut-realistic foundation rather than fighting it.
+    if gamut_compression > 0.0:
+        img = _apply_film_gamut(img, gamut_compression=gamut_compression)
 
     # Blue-sky teal shift: blue-dominant mid-bright pixels with meaningful
     # saturation drift toward cyan-teal, matching the characteristic rendering

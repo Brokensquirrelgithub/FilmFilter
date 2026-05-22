@@ -12,12 +12,15 @@ def apply_grain(
     image: np.ndarray,
     *,
     grain_amount: float = 0.024,
-    grain_size: float = 1.05,
+    grain_size: float = 1.45,
     grain_shadow_bias: float = 0.58,
     grain_chromaticity: float = 0.18,
     micro_grain_amount: float = 0.018,
     mid_grain_amount: float = 0.008,
     density_variation_amount: float = 0.004,
+    clump_amount: float = 0.55,
+    size_variation: float = 0.45,
+    grain_softness: float = 0.45,
     texture_scale_balance: float = 0.48,
     scanner_softness: float = 0.05,
     tonal_diffusion: float = 0.04,
@@ -65,6 +68,25 @@ def apply_grain(
                 noise = noise[..., None]
         return normalized_map(noise)
 
+    def heavy_tail_noise(shape: tuple[int, ...], sigma: float, variation: float) -> np.ndarray:
+        """Noise with non-Gaussian tails — produces occasional larger 'kernels'.
+
+        Real emulsion crystals follow a roughly log-normal size distribution.
+        We approximate this by blending a Gaussian field with a sparser, sharper
+        field that has been raised to a power preserving sign. The result keeps
+        the same statistics on average but has heavier tails: a few grains pop
+        noticeably bigger and brighter than the rest.
+        """
+        base = normalized_noise(shape, sigma)
+        if variation <= 0.0:
+            return base
+        coarse = normalized_noise(shape, sigma * 1.85)
+        sign = np.sign(coarse)
+        accent = sign * np.abs(coarse) ** 0.55
+        accent = normalized_map(accent)
+        mix = np.clip(variation, 0.0, 1.0)
+        return normalized_map(base * (1.0 - mix * 0.55) + accent * (mix * 0.55))
+
     def shift_channel(channel: np.ndarray, shift_x: float, shift_y: float) -> np.ndarray:
         matrix = np.float32([[1, 0, shift_x], [0, 1, shift_y]])
         return cv2.warpAffine(channel, matrix, (w, h), flags=cv2.INTER_LINEAR, borderMode=cv2.BORDER_REFLECT)
@@ -79,14 +101,27 @@ def apply_grain(
     harsh_edge = smoothstep(0.035, 0.14, local_contrast)
 
     balance = np.clip(texture_scale_balance, 0.0, 1.0)
-    micro = normalized_noise((h, w, 1), max(float(grain_size) * 0.16, 0.01))
-    fine = normalized_noise((h, w, 1), max(float(grain_size) * 0.34, 0.01))
+    variation = np.clip(size_variation, 0.0, 1.0)
+    micro = heavy_tail_noise((h, w, 1), max(float(grain_size) * 0.20, 0.01), variation)
+    fine = heavy_tail_noise((h, w, 1), max(float(grain_size) * 0.42, 0.01), variation * 0.85)
     mid = normalized_noise((h, w, 1), max(float(grain_size) * (1.15 + balance * 1.10), 0.01))
     low = normalized_noise((h, w, 1), max(min(h, w) * (0.038 + balance * 0.030), 1.8))
+
+    # Clump field: intermediate-scale density modulation that creates the
+    # darker patches characteristic of real emulsion. Sized in pixels relative
+    # to grain_size so clumps scale with kernel size.
+    clump_sigma = max(float(grain_size) * 6.0 + 4.0, 3.0)
+    clump_field = normalized_noise((h, w, 1), clump_sigma)
+    clump_mod = clump_field * np.clip(clump_amount, 0.0, 1.0) * 0.55
 
     micro_layer = normalized_map(micro * 0.72 + fine * 0.28)
     mid_layer = normalized_map(mid * 0.78 + fine * 0.22)
     density_layer = normalized_map(low)
+    # Modulate fine-scale grain energy by the clump field: regions where the
+    # clump field is high get amplified grain, low regions get suppressed.
+    clump_envelope = 1.0 + clump_mod
+    micro_layer = micro_layer * clump_envelope
+    mid_layer = mid_layer * (1.0 + clump_mod * 0.55)
     mono_grain = normalized_map(
         micro_layer * (0.70 - balance * 0.18)
         + mid_layer * (0.20 + balance * 0.22)
@@ -100,9 +135,10 @@ def apply_grain(
     _ch_scale = [1.00, 0.72, 1.40]  # red, green, blue — relative to grain_size
     color_grain = np.empty((h, w, 3), dtype=np.float32)
     for ci, scale in enumerate(_ch_scale):
-        fine_ch = normalized_noise((h, w), max(float(grain_size) * 0.18 * scale, 0.01))
-        med_ch = normalized_noise((h, w), max(float(grain_size) * 0.72 * scale, 0.01))
-        color_grain[..., ci : ci + 1] = normalized_map(fine_ch * 0.66 + med_ch * 0.34)
+        fine_ch = heavy_tail_noise((h, w), max(float(grain_size) * 0.22 * scale, 0.01), variation * 0.7)
+        med_ch = normalized_noise((h, w), max(float(grain_size) * 0.85 * scale, 0.01))
+        ch = normalized_map(fine_ch * 0.66 + med_ch * 0.34)
+        color_grain[..., ci : ci + 1] = ch * clump_envelope
 
     # Texture is exposure-aware and edge-aware. Highlights remain creamy, while
     # hard digital transitions get less additive grain and more soft integration.
@@ -134,6 +170,17 @@ def apply_grain(
     # — silver grain in shadows is expected and looks correct.
     chroma_signal_gate = smoothstep(0.06, 0.35, luminance_values)
     grain = (luma_texture * (1.0 - chroma_mix * 0.38) + chroma_texture * chroma_signal_gate) * intensity
+
+    # Optical integration: scanned grain is never razor-sharp. A small Gaussian
+    # blur on the assembled grain layer fuses adjacent kernels into the soft,
+    # slightly diffused appearance of real emulsion under a scanner's sample
+    # aperture. Without this, multi-octave noise reads as crisp digital dither.
+    soft_grain = np.clip(grain_softness, 0.0, 1.0)
+    if soft_grain > 0.0:
+        blur_sigma = 0.35 + soft_grain * 0.65
+        grain = cv2.GaussianBlur(grain, ksize=(0, 0), sigmaX=blur_sigma, sigmaY=blur_sigma)
+        if grain.ndim == 2:
+            grain = grain[..., None]
 
     density_amount = np.clip(density_instability, 0.0, 0.08) + density_strength
     density_modulation = density_layer * density_amount * (
