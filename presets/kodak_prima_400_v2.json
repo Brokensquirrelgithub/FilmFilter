@@ -14,7 +14,7 @@
   "effects": {
     "tone": {
       "enabled": true,
-      "black_lift": 0.04,
+      "black_lift": 0.0892,
       "contrast_softness": 0.22,
       "highlight_compression": 0.245,
       "shoulder_strength": 0.204,
@@ -30,7 +30,7 @@
     "color": {
       "enabled": true,
       "saturation": 0.92,
-      "green_mute": 0.1108,
+      "green_mute": 0.1208,
       "highlight_warmth": 0.065,
       "skin_magenta_bias": 0.022,
       "saturation_compression": 0.26,
@@ -55,21 +55,21 @@
     },
     "sharpness": {
       "enabled": true,
-      "soften_digital_sharpness": false,
+      "soften_digital_sharpness": true,
       "sharpness_softening_strength": 0.18,
       "microcontrast_reduction": 0.16
     },
     "grain": {
       "enabled": true,
       "grain_amount": 0.0112,
-      "grain_size": 2.039,
+      "grain_size": 1.203,
       "grain_shadow_bias": 0.692,
       "grain_chromaticity": 0.42,
-      "micro_grain_amount": 0.0208,
-      "mid_grain_amount": 0.0161,
+      "micro_grain_amount": 0.008,
+      "mid_grain_amount": 0.0131,
       "density_variation_amount": 0.00336,
       "clump_amount": 0.55,
-      "size_variation": 0.258,
+      "size_variation": 0.179,
       "grain_softness": 0.689,
       "texture_scale_balance": 0.448,
       "scanner_softness": 0.337,
